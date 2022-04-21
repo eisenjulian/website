@@ -19,6 +19,7 @@ import re
 from typing import Any, Iterator, Mapping, Optional, Sequence, Tuple
 
 import google.auth
+from google.cloud import language_v1
 import lib.config as libconfig
 import requests
 import urllib3
@@ -147,6 +148,8 @@ def create_inference_client(config_path: str) -> Optional[InferenceClient]:
 if not cfg.TEST and cfg.AI_CONFIG_PATH:
     _INFERENCE_CLIENT = create_inference_client(cfg.AI_CONFIG_PATH)
 
+_LANGUAGE_CLIENT = language_v1.LanguageServiceClient()
+
 # ----------------------------- SEARCH FUNCTIONS -----------------------------
 
 _MAX_SEARCH_RESULTS = 1000
@@ -169,6 +172,29 @@ def _iterate_property_value(
         value = match.group(2).strip()
         if (include is None or key in include) and key not in exclude:
             yield (key, value)
+
+
+def _get_first_span(mentions) -> Optional[language_v1.TextSpan]:
+    for mention in mentions:
+        if mention.type == language_v1.EntityMention.Type.PROPER:
+            return mention.text
+    return None
+
+
+def get_places(query: str) -> Sequence[Tuple[str, language_v1.TextSpan]]:
+    global _LANGUAGE_CLIENT
+
+    if not _LANGUAGE_CLIENT:
+        return []
+
+    document = language_v1.Document(
+        content=query, type_=language_v1.Document.Type.PLAIN_TEXT
+    )
+    response = _LANGUAGE_CLIENT.analyze_entities(request={"document": document})
+    locations = [e for e in response.entities
+                 if e.type == language_v1.Entity.Type.LOCATION]
+    metadata = [(e.metadata.get("mid"), _get_first_span(e)) for e in locations]
+    return [(mid, span) for mid, span in metadata if mid and span is not None]
 
 
 def search(query: str) -> Optional[Any]:
